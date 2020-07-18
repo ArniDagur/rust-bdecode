@@ -1,0 +1,8 @@
+[package]
+name = "bdecode"
+version = "0.1.0"
+authors = ["Árni Dagur <arni@dagur.eu>"]
+edition = "2018"
+
+[dependencies]
+memchr = "*"
