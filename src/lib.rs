@@ -8,6 +8,7 @@ use parse_int::{check_integer, decode_int, is_numeric};
 use stack_frame::{StackFrame, StackFrameState};
 use token::{Token, TokenType};
 
+use std::cell::Cell;
 use std::convert::TryInto;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -38,23 +39,282 @@ pub enum NodeType {
 
 pub struct Node<'a> {
     buf: &'a [u8],
-    tokens: Option<Vec<Token>>,
+    /// if this is the root node, that owns all the tokens, they live in this
+    /// vector. If this is a sub-node, this field is not used, instead the
+    /// `root_tokens` reference points to the root node's token.
+    tokens: Vec<Token>,
 }
 
 impl<'a> Node<'a> {
-    pub fn print(&self) {
-        match &self.tokens {
-            Some(tokens) => {
-                for token in tokens {
-                    println!("{:?}", token);
-                }
-            }
-            None => println!("None"),
+    pub fn get_root<'t>(&'t self) -> NodeChild<'a, 't> {
+        NodeChild {
+            buf: self.buf,
+            root_tokens: &self.tokens,
+            token_idx: 0,
+            cached_lookup: Cell::new(None),
+            size: Cell::new(None),
         }
     }
 }
 
-pub fn bdecode<'a>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
+#[derive(Debug, Clone)]
+pub struct NodeChild<'a, 't> {
+    buf: &'a [u8],
+    /// this points to the root node's token vector
+    /// for the root node, this points to its own tokens member
+    root_tokens: &'t [Token],
+    /// this is the index into m_root_tokens that this node refers to
+    /// for the root node, it's 0.
+    token_idx: usize,
+    /// this is a cache of the last element index looked up. This only applies
+    /// to lists and dictionaries. If the next lookup is at m_last_index or
+    /// greater, we can start iterating the tokens at m_last_token.
+    cached_lookup: Cell<Option<(usize, usize)>>,
+    /// the number of elements in this list or dict (computed on the first
+    /// call to dict_size() or list_size())
+    size: Cell<Option<usize>>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum BencodeError {
+    TypeError,
+    IndexError,
+}
+
+impl<'a, 't> NodeChild<'a, 't> {
+    fn create_child(&self, token_idx: usize) -> NodeChild<'a, 't> {
+        NodeChild {
+            buf: self.buf,
+            root_tokens: self.root_tokens,
+            token_idx: token_idx,
+            cached_lookup: Cell::new(None),
+            size: Cell::new(None),
+        }
+    }
+
+    pub fn node_type(&self) -> NodeType {
+        let token_type = self.root_tokens[self.token_idx].token_type();
+        match token_type {
+            TokenType::Dict => NodeType::Dict,
+            TokenType::List => NodeType::List,
+            TokenType::Int => NodeType::Int,
+            TokenType::Str => NodeType::Str,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns the item in the list at the given index. Returns an error if
+    /// this node is not a list.
+    pub fn list_at(&self, index: usize) -> Result<NodeChild<'a, 't>, BencodeError> {
+        if self.node_type() != NodeType::List {
+            return Err(BencodeError::TypeError);
+        }
+
+        let mut token = self.token_idx + 1;
+        let mut item = 0;
+
+        let lookup = self.cached_lookup.get();
+        if let Some((last_token, last_index)) = lookup {
+            if last_index >= index {
+                token = last_token;
+                item = last_index;
+            }
+        }
+
+        while item < index {
+            token += self.root_tokens[token].next_item();
+            item += 1;
+            // index out of range
+            if self.root_tokens[token].token_type() == TokenType::End {
+                // at least we know the size of the list now :p
+                self.size.set(Some(item));
+                return Err(BencodeError::IndexError);
+            }
+        }
+
+        // There's no point in caching the first item
+        if index > 0 {
+            self.cached_lookup.set(Some((token, index)));
+        }
+
+        Ok(self.create_child(token))
+    }
+
+    /// Returns how many items there are in this list. Returns an error if
+    /// this node is not a list.
+    pub fn list_size(&self) -> Result<usize, BencodeError> {
+        if self.node_type() != NodeType::List {
+            return Err(BencodeError::TypeError);
+        }
+
+        // Maybe we have the size cached
+        if let Some(size) = self.size.get() {
+            return Ok(size);
+        }
+
+        let mut token = self.token_idx + 1;
+        let mut size = 0;
+
+        if let Some((last_token, last_index)) = self.cached_lookup.get() {
+            token = last_token;
+            size = last_index;
+        }
+
+        while self.root_tokens[token].token_type() != TokenType::End {
+            token += self.root_tokens[token].next_item();
+            size += 1;
+        }
+
+        self.size.set(Some(size));
+        Ok(size)
+    }
+
+    pub fn dict_at(&self, index: usize) -> Result<(&'a [u8], NodeChild<'a, 't>), BencodeError> {
+        if self.node_type() != NodeType::Dict {
+            return Err(BencodeError::TypeError);
+        }
+
+        let mut token = self.token_idx + 1;
+        let mut item = 0;
+
+        // do we have a lookup cached?
+        if let Some((last_token, last_index)) = self.cached_lookup.get() {
+            if last_index >= index {
+                token = last_token;
+                item = last_index;
+            }
+        }
+
+        while item < index {
+            debug_assert_eq!(self.root_tokens[token].token_type(), TokenType::Str);
+
+            // skip the key
+            token += self.root_tokens[token].next_item();
+            if self.root_tokens[token].token_type() == TokenType::End {
+                // index out of range
+                self.size.set(Some(item));
+                return Err(BencodeError::IndexError);
+            }
+            // skip the value
+            token += self.root_tokens[token].next_item();
+            if self.root_tokens[token].token_type() == TokenType::End {
+                // index out of range
+                self.size.set(Some(item));
+                return Err(BencodeError::IndexError);
+            }
+            item += 1;
+        }
+
+        // There's no point in caching the first item
+        if index > 0 {
+            self.cached_lookup.set(Some((token, index)));
+        }
+
+        let key_node = self.create_child(token);
+        let key = key_node.string_buf()?;
+
+        let value_token = token + self.root_tokens[token].next_item();
+        let value_node = self.create_child(value_token);
+
+        Ok((key, value_node))
+    }
+
+    pub fn dict_find(&self, key: &[u8]) -> Result<Option<NodeChild<'a, 't>>, BencodeError> {
+        if self.node_type() != NodeType::Dict {
+            return Err(BencodeError::TypeError);
+        }
+
+        let mut token = self.token_idx + 1;
+
+        while self.root_tokens[token].token_type() != TokenType::End {
+            let t = &self.root_tokens[token];
+            // the keys should always be strings
+            assert_eq!(t.token_type(), TokenType::Str);
+            let t_off = t.offset();
+            let t_off_start = t.start_offset();
+
+            let t_next = &self.root_tokens[token + 1];
+            let t_next_off = t_next.offset();
+
+            // compare the keys
+            let size = t_next_off - t_off - t_off_start;
+            if (size == key.len())
+                && (key == &self.buf[(t_off + t_off_start)..(t_off + t_off_start + size)])
+            {
+                // skip key
+                token += t.next_item();
+                assert_ne!(self.root_tokens[token].token_type(), TokenType::End);
+                // return the value
+                return Ok(Some(NodeChild {
+                    buf: self.buf,
+                    root_tokens: self.root_tokens,
+                    token_idx: token,
+                    cached_lookup: Cell::new(None),
+                    size: Cell::new(None),
+                }));
+            }
+            // skip key
+            token += t.next_item();
+            assert_ne!(self.root_tokens[token].token_type(), TokenType::End);
+            // skip value
+            token += self.root_tokens[token].next_item();
+        }
+
+        Ok(None)
+    }
+
+    pub fn dict_size(&self) -> Result<usize, BencodeError> {
+        if self.node_type() != NodeType::Dict {
+            return Err(BencodeError::TypeError);
+        }
+
+        // Maybe we have the size cached
+        if let Some(size) = self.size.get() {
+            return Ok(size);
+        }
+
+        let mut token = self.token_idx + 1;
+        let mut item = 0;
+
+        if let Some((last_token, last_index)) = self.cached_lookup.get() {
+            token = last_token;
+            item = last_index * 2;
+        }
+
+        while self.root_tokens[token].token_type() != TokenType::End {
+            token += self.root_tokens[token].next_item();
+            item += 1;
+        }
+
+        // a dictionary must contain full key-value pairs. which means
+        // the number of entries is divisible by 2
+        assert_eq!(item % 2, 0);
+
+        // each item is one key and one value, so divide by 2
+        let size = item / 2;
+
+        self.size.set(Some(size));
+        Ok(size)
+    }
+
+    pub fn string_buf(&self) -> Result<&'a [u8], BencodeError> {
+        if self.node_type() != NodeType::Str {
+            return Err(BencodeError::TypeError);
+        }
+        let t = &self.root_tokens[self.token_idx];
+        let t_off = t.offset();
+        let t_off_start = t.start_offset();
+
+        let t_next = &self.root_tokens[self.token_idx + 1];
+        let t_next_off = t_next.offset();
+
+        let size = t_next_off - t_off - t_off_start;
+
+        Ok(&self.buf[(t_off + t_off_start)..(t_off + t_off_start + size)])
+    }
+}
+
+pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
     if buf.len() > Token::MAX_OFFSET {
         return Err(BDecodeError::LimitExceeded);
     }
@@ -202,6 +462,26 @@ pub fn bdecode<'a>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
 
     Ok(Node {
         buf,
-        tokens: Some(tokens),
+        tokens: tokens,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_at() {
+        let node = bdecode(b"l4:spami42ee").unwrap();
+        let root = node.get_root();
+        let result = root.list_at(1).unwrap();
+        println!("{:?}", result);
+    }
+
+    #[test]
+    fn test_list_size() {
+        let node = bdecode(b"l4:spami42ee").unwrap();
+        let root = node.get_root();
+        assert_eq!(root.list_size().unwrap(), 2);
+    }
 }

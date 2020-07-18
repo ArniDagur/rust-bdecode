@@ -102,6 +102,14 @@ impl Token {
             _ => unreachable!(),
         }
     }
+
+    #[inline(always)]
+    pub fn start_offset(&self) -> usize {
+        // Shouldn't this just be an if statement based on type? One where we
+        // conditionally plus 2?
+        assert_eq!(self.token_type(), TokenType::Str);
+        self.header() + 2
+    }
 }
 
 impl fmt::Debug for Token {
