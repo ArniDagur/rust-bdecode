@@ -1,13 +1,6 @@
 use std::iter::Iterator;
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ParseIntError {
-    Empty,
-    LeadingZero,
-    NegativeZero,
-    Overflow,
-    InvalidByte,
-    UnexpectedEof,
-}
+
+use super::BDecodeError;
 
 /// Check if the given byte represent a numeric digit
 #[inline(always)]
@@ -60,29 +53,29 @@ fn will_integer_fit_i64(bytes: &[u8], negative: bool) -> bool {
 /// not detect all overflows, just the ones that are an order of magnitude
 /// beyond. Exact overflow checking is done when the integer value is queried
 /// from a bdecode_node.
-pub fn check_integer(bytes: &[u8]) -> Result<(), ParseIntError> {
+pub fn check_integer(bytes: &[u8]) -> Result<(), BDecodeError> {
     if bytes.len() == 0 {
-        return Err(ParseIntError::Empty);
+        return Err(BDecodeError::UnexpectedEof);
     }
     let negative = bytes[0] == '-' as u8;
     if negative && bytes.len() == 1 {
-        return Err(ParseIntError::UnexpectedEof);
+        return Err(BDecodeError::ExpectedDigit);
     }
     let numeric_part = &bytes[(negative as usize)..];
     let looks_like_a_number = numeric_part.iter().all(|c| is_numeric(*c));
     if !looks_like_a_number {
         println!("Doesn't look like a number: {:?}", &bytes);
-        return Err(ParseIntError::InvalidByte);
+        return Err(BDecodeError::ExpectedDigit);
     }
     if !will_integer_fit_i64(numeric_part, negative) {
         println!("Doesn't fit");
-        return Err(ParseIntError::Overflow);
+        return Err(BDecodeError::Overflow);
     }
     Ok(())
 }
 
 #[inline(always)]
-fn decode_int_no_sign(bytes: &[u8], negative: bool) -> Result<i64, ParseIntError> {
+fn decode_int_no_sign(bytes: &[u8], negative: bool) -> Result<i64, BDecodeError> {
     if (bytes.len() == 1) && (bytes[0] == 48) {
         // This is the only case where a zero is allowed, without a non-zero
         // character coming first. We make this a special case to simplify
@@ -93,48 +86,49 @@ fn decode_int_no_sign(bytes: &[u8], negative: bool) -> Result<i64, ParseIntError
     let mut result: i64 = 0;
     for &byte in bytes {
         if !is_numeric(byte) {
-            return Err(ParseIntError::InvalidByte);
+            return Err(BDecodeError::ExpectedDigit);
         }
         // This substraction never underflows because of the check above.
         let digit = byte - 48;
         // Check if we have a leading zero, e.g. "01"
         if digit == 0 {
             if !has_encountered_nonzero {
-                return Err(ParseIntError::LeadingZero);
+                return Err(BDecodeError::LeadingZero);
             }
         } else {
             has_encountered_nonzero = true;
         }
         result = match result.checked_mul(10) {
             Some(result) => result,
-            None => return Err(ParseIntError::Overflow),
+            None => return Err(BDecodeError::Overflow),
         };
         if negative {
             result = match result.checked_sub(digit.into()) {
                 Some(result) => result,
-                None => return Err(ParseIntError::Overflow),
+                None => return Err(BDecodeError::Overflow),
             };
         } else {
             result = match result.checked_add(digit.into()) {
                 Some(result) => result,
-                None => return Err(ParseIntError::Overflow),
+                None => return Err(BDecodeError::Overflow),
             };
         }
     }
     return Ok(result);
 }
 
-pub fn decode_int(bytes: &[u8]) -> Result<i64, ParseIntError> {
+pub fn decode_int(bytes: &[u8]) -> Result<i64, BDecodeError> {
     if bytes.is_empty() {
-        return Err(ParseIntError::Empty);
+        return Err(BDecodeError::UnexpectedEof);
     }
+    println!("{:?}", bytes);
     let (negative, integer) = match bytes[0] {
         b'-' => (true, decode_int_no_sign(&bytes[1..], true)?),
         b'0'..=b'9' => (false, decode_int_no_sign(bytes, false)?),
-        _ => return Err(ParseIntError::InvalidByte),
+        _ => return Err(BDecodeError::ExpectedDigit),
     };
     if negative && integer == 0 {
-        return Err(ParseIntError::NegativeZero);
+        return Err(BDecodeError::NegativeZero);
     }
     return Ok(integer);
 }
@@ -160,7 +154,7 @@ mod tests {
     fn test_negative_zero() {
         // Negative zero is not allowed
         let neg_zero = b"-0";
-        assert_eq!(decode_int(neg_zero), Err(ParseIntError::NegativeZero));
+        assert_eq!(decode_int(neg_zero), Err(BDecodeError::NegativeZero));
         // But normal zero is allowed
         let zero = b"0";
         assert_eq!(decode_int(zero).unwrap(), 0);

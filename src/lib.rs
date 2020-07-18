@@ -27,6 +27,10 @@ pub enum BDecodeError {
     LimitExceeded,
     /// Integer overflow
     Overflow,
+    // Leading zero in integer
+    LeadingZero,
+    // Integer is negative zero
+    NegativeZero,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -79,6 +83,13 @@ pub struct NodeChild<'a, 't> {
 pub enum BencodeError {
     TypeError,
     IndexError,
+    ParseError(BDecodeError),
+}
+
+impl From<BDecodeError> for BencodeError {
+    fn from(error: BDecodeError) -> BencodeError {
+        BencodeError::ParseError(error)
+    }
 }
 
 impl<'a, 't> NodeChild<'a, 't> {
@@ -312,6 +323,25 @@ impl<'a, 't> NodeChild<'a, 't> {
 
         Ok(&self.buf[(t_off + t_off_start)..(t_off + t_off_start + size)])
     }
+
+    pub fn int_value(&self) -> Result<i64, BencodeError> {
+        if self.node_type() != NodeType::Int {
+            return Err(BencodeError::TypeError);
+        }
+        let t = &self.root_tokens[self.token_idx];
+        let t_off = t.offset();
+        assert_eq!(self.buf[t_off], b'i');
+
+        let t_next = &self.root_tokens[self.token_idx + 1];
+        let t_next_off = t_next.offset();
+
+        // Minus `2` to exclude the `e` character, and the first character of
+        // the next token.
+        let size = t_next_off - 2 - t_off;
+
+        let int_start = t_off + 1;
+        Ok(decode_int(&self.buf[int_start..(int_start + size)])?)
+    }
 }
 
 pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
@@ -403,7 +433,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
                 let top = stack[sp - 1].token();
                 // subtract the token's own index, since this is a relative
                 // offset
-                let next_item = tokens.len();
+                let next_item = tokens.len() - top;
                 tokens[top].set_next_item(next_item)?;
                 // and pop it from the stack.
                 debug_assert!(sp > 0);
@@ -471,17 +501,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_list_at() {
-        let node = bdecode(b"l4:spami42ee").unwrap();
-        let root = node.get_root();
-        let result = root.list_at(1).unwrap();
-        println!("{:?}", result);
+    fn test_list_1() {
+        let bencode = bdecode(b"l4:spami42ee").unwrap();
+        let root_node = bencode.get_root();
+        assert_eq!(root_node.node_type(), NodeType::List);
+        assert_eq!(root_node.list_size().unwrap(), 2);
+
+        // First element is the string `spam`.
+        let elem_0 = root_node.list_at(0).unwrap();
+        assert_eq!(elem_0.node_type(), NodeType::Str);
+        assert_eq!(elem_0.string_buf().unwrap(), b"spam");
+
+        // The second element is the integer `42`.
+        let elem_1 = root_node.list_at(1).unwrap();
+        assert_eq!(elem_1.node_type(), NodeType::Int);
+
+        // the list is only of size 2, so this should be out of bounds
+        assert!(root_node.list_at(2).is_err());
     }
 
     #[test]
-    fn test_list_size() {
-        let node = bdecode(b"l4:spami42ee").unwrap();
-        let root = node.get_root();
-        assert_eq!(root.list_size().unwrap(), 2);
+    fn test_dict_1() {
+        // Corresponds to the following JSON: {"a":{"b":1,"c":"abcd"},"d":3}
+        let bencode = bdecode(b"d1:ad1:bi1e1:c4:abcde1:di3ee").unwrap();
+        let root_node = bencode.get_root();
+        assert_eq!(root_node.node_type(), NodeType::Dict);
+        assert_eq!(root_node.dict_size().unwrap(), 2);
+
+        let (key0, value0) = root_node.dict_at(0).unwrap();
+        assert_eq!(key0, b"a");
+        assert_eq!(value0.node_type(), NodeType::Dict);
+        assert_eq!(value0.dict_size().unwrap(), 2);
+
+        let (key00, value00) = value0.dict_at(0).unwrap();
+        assert_eq!(key00, b"b");
+        assert_eq!(value00.node_type(), NodeType::Int);
+        assert_eq!(value00.int_value().unwrap(), 1);
+
+        let (key01, value01) = value0.dict_at(1).unwrap();
+        assert_eq!(key01, b"c");
+        assert_eq!(value01.node_type(), NodeType::Str);
+        assert_eq!(value01.string_buf().unwrap(), b"abcd");
+
+        let (key1, value1) = root_node.dict_at(1).unwrap();
+        assert_eq!(key1, b"d");
+        assert_eq!(value1.node_type(), NodeType::Int);
+        assert_eq!(value1.int_value().unwrap(), 3);
     }
 }
