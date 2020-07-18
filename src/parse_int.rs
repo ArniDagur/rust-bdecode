@@ -64,11 +64,9 @@ pub fn check_integer(bytes: &[u8]) -> Result<(), BDecodeError> {
     let numeric_part = &bytes[(negative as usize)..];
     let looks_like_a_number = numeric_part.iter().all(|c| is_numeric(*c));
     if !looks_like_a_number {
-        println!("Doesn't look like a number: {:?}", &bytes);
         return Err(BDecodeError::ExpectedDigit);
     }
     if !will_integer_fit_i64(numeric_part, negative) {
-        println!("Doesn't fit");
         return Err(BDecodeError::Overflow);
     }
     Ok(())
@@ -121,7 +119,6 @@ pub fn decode_int(bytes: &[u8]) -> Result<i64, BDecodeError> {
     if bytes.is_empty() {
         return Err(BDecodeError::UnexpectedEof);
     }
-    println!("{:?}", bytes);
     let (negative, integer) = match bytes[0] {
         b'-' => (true, decode_int_no_sign(&bytes[1..], true)?),
         b'0'..=b'9' => (false, decode_int_no_sign(bytes, false)?),

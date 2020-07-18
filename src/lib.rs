@@ -110,7 +110,7 @@ impl<'a, 't> NodeChild<'a, 't> {
             TokenType::List => NodeType::List,
             TokenType::Int => NodeType::Int,
             TokenType::Str => NodeType::Str,
-            _ => unreachable!(),
+            _ => unreachable!("{:?} unexpected", token_type),
         }
     }
 
@@ -123,6 +123,12 @@ impl<'a, 't> NodeChild<'a, 't> {
 
         let mut token = self.token_idx + 1;
         let mut item = 0;
+
+        if self.root_tokens[token].token_type() == TokenType::End {
+            // index out of range
+            self.size.set(Some(item));
+            return Err(BencodeError::IndexError);
+        }
 
         let lookup = self.cached_lookup.get();
         if let Some((last_token, last_index)) = lookup {
@@ -188,6 +194,12 @@ impl<'a, 't> NodeChild<'a, 't> {
         let mut token = self.token_idx + 1;
         let mut item = 0;
 
+        if self.root_tokens[token].token_type() == TokenType::End {
+            // index out of range
+            self.size.set(Some(item));
+            return Err(BencodeError::IndexError);
+        }
+
         // do we have a lookup cached?
         if let Some((last_token, last_index)) = self.cached_lookup.get() {
             if last_index >= index {
@@ -197,7 +209,7 @@ impl<'a, 't> NodeChild<'a, 't> {
         }
 
         while item < index {
-            debug_assert_eq!(self.root_tokens[token].token_type(), TokenType::Str);
+            assert_eq!(self.root_tokens[token].token_type(), TokenType::Str);
 
             // skip the key
             token += self.root_tokens[token].next_item();
@@ -487,6 +499,10 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
         }
     }
 
+    if sp > 0 {
+        return Err(BDecodeError::UnexpectedEof);
+    }
+
     // one final end token
     tokens.push(Token::new(off, TokenType::End, 0, 0)?);
 
@@ -499,6 +515,31 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_dict_list_no_end() {
+        let result_dict = bdecode(b"d");
+        assert!(result_dict.is_err());
+        let result_list = bdecode(b"l");
+        assert!(result_list.is_err());
+    }
+
+    #[test]
+    fn test_index_empty_dict() {
+        let bencode = bdecode(b"de").unwrap();
+        let dict_node = bencode.get_root();
+        assert_eq!(dict_node.node_type(), NodeType::Dict);
+        assert!(dict_node.dict_at(0).is_err());
+        assert!(dict_node.dict_find(b"my_key").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_index_empty_list() {
+        let bencode = bdecode(b"le").unwrap();
+        let list_node = bencode.get_root();
+        assert_eq!(list_node.node_type(), NodeType::List);
+        assert!(list_node.list_at(0).is_err());
+    }
 
     #[test]
     fn test_list_1() {
