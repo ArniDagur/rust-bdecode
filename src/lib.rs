@@ -367,11 +367,11 @@ impl<'a, 't> NodeChild<'a, 't> {
         match self.node_type() {
             NodeType::List => {
                 length += 4;
-                if length > limit {
-                    return None;
-                }
                 for i in 0..self.list_size().unwrap() {
-                    let list_length = self.list_at(i).unwrap().line_length(limit - length)?;
+                    let list_length = self
+                        .list_at(i)
+                        .unwrap()
+                        .line_length(limit.checked_sub(length)?)?;
                     length += list_length + 2;
                 }
             }
@@ -386,10 +386,7 @@ impl<'a, 't> NodeChild<'a, 't> {
                     // string, not the length of the string representation. It
                     // should be good enough for our use-case however.
                     length += 4 + key.len();
-                    if length > limit {
-                        return None;
-                    }
-                    let dict_length = value.line_length(limit - length)?;
+                    let dict_length = value.line_length(limit.checked_sub(length)?)?;
                     length += dict_length + 1;
                 }
             }
@@ -407,25 +404,17 @@ impl<'a, 't> NodeChild<'a, 't> {
         }
     }
 
-    pub fn print_entry(
-        &self,
-        single_line: bool,
-        indent_level: usize,
-    ) -> String {
+    pub fn print_entry(&self, single_line: bool, indent_level: usize) -> String {
         const TWO_SPACES: &'static str = "  ";
         let ident_str = "\n".to_string() + &TWO_SPACES.repeat(indent_level);
         let mut ret = String::new();
-        println!("printing {:?}", &self.root_tokens[self.token_idx]);
         match self.node_type() {
             NodeType::Int => {
                 ret += &String::from_utf8(self.int_buf().unwrap().to_vec()).unwrap();
-                // println!("result is {:?}", ret);
                 return ret;
             }
             NodeType::Str => {
-                // return String::from_utf8_lossy(self.string_buf().unwrap()).to_string();
-                ret += &print_string(self.string_buf().unwrap(), single_line);
-                // println!("result is {:?}", ret);
+                ret += &print_string(self.string_buf().unwrap());
                 return ret;
             }
             NodeType::List => {
@@ -439,8 +428,7 @@ impl<'a, 't> NodeChild<'a, 't> {
                         ret.push(' ');
                     }
                     let list_elem = self.list_at(i).unwrap();
-                    // ret.push_str(&list_elem.print_entry(single_line, indent_level + 1));
-                    ret.push_str("list item");
+                    ret.push_str(&list_elem.print_entry(single_line, indent_level + 1));
                     if (i + 1) < self.list_size().unwrap() {
                         ret.push(',');
                         if one_liner {
@@ -458,7 +446,6 @@ impl<'a, 't> NodeChild<'a, 't> {
                     }
                 }
                 ret.push(']');
-                // println!("result is {:?}", ret);
                 return ret;
             }
             NodeType::Dict => {
@@ -473,7 +460,7 @@ impl<'a, 't> NodeChild<'a, 't> {
                         ret.push(' ');
                     }
                     let (key, value) = self.dict_at(i).unwrap();
-                    ret += &String::from_utf8_lossy(key);
+                    ret += &print_string(key);
                     ret.push_str(": ");
                     ret.push_str(&value.print_entry(single_line, indent_level + 1));
                     if (i + 1) < self.dict_size().unwrap() {
@@ -493,14 +480,13 @@ impl<'a, 't> NodeChild<'a, 't> {
                     }
                 }
                 ret.push('}');
-                // println!("result is {:?}", ret);
                 return ret;
             }
         }
     }
 }
 
-fn print_string(buf: &[u8], single_line: bool) -> String {
+fn print_string(buf: &[u8]) -> String {
     let mut res = String::new();
     res += "'";
     for &c in buf {
@@ -511,7 +497,6 @@ fn print_string(buf: &[u8], single_line: bool) -> String {
                 res.push(c as char);
             }
         } else {
-            // res.push_str("\\?");
             res.push_str(&format!("\\[{}]", c))
         }
     }
@@ -528,6 +513,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
     }
     let mut sp: usize = 0;
     let mut stack: Vec<StackFrame> = Vec::new();
+    // let mut stack:: Vec<StackFrame> = Vec::with_
     let mut tokens: Vec<Token> = Vec::new();
     let mut off = 0;
     while off < buf.len() {
@@ -553,6 +539,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
                 let new_frame =
                     StackFrame::new(tokens.len().try_into().unwrap(), StackFrameState::Key);
                 stack.push(new_frame);
+                // stack[sp] = new_frame;
                 sp += 1;
                 // we push it into the stack so that we know where to fill
                 // in the next_node field once we pop this node off the stack.
@@ -565,6 +552,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
                 let new_frame =
                     StackFrame::new(tokens.len().try_into().unwrap(), StackFrameState::Key);
                 stack.push(new_frame);
+                // stack[sp] = new_frame;
                 sp += 1;
                 // we push it into the stack so that we know where to fill
                 // in the next_node field once we pop this node off the stack.
@@ -584,7 +572,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
                 check_integer(&buf[(off + 1)..end_index]).map_err(|_| BDecodeError::Overflow)?;
                 let new_token = Token::new(off, TokenType::Int, 1, 1)?;
                 tokens.push(new_token);
-                debug_assert_eq!(buf[end_index], b'e');
+                assert_eq!(buf[end_index], b'e');
                 off = end_index + 1;
             }
             b'e' => {
@@ -611,7 +599,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
                 let next_item = tokens.len() - top;
                 tokens[top].set_next_item(next_item)?;
                 // and pop it from the stack.
-                debug_assert!(sp > 0);
+                assert!(sp > 0);
                 sp -= 1;
                 off += 1;
             }
@@ -654,6 +642,16 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
         {
             // the next item we parse is the opposite
             stack[current_frame - 1].toggle_state();
+        }
+
+        if sp < current_frame {
+            // this is a deviation from libtorrent. we do this because we use
+            // a dynamically sized vector for tokens, instead of allocating
+            // space for the entire stack upfront.
+            //
+            // if we popped the stack above where we decrement the sp index,
+            // we'd end up trying to read out of bounds in the if statement above
+            stack.pop();
         }
 
         if sp == 0 {
@@ -751,5 +749,22 @@ mod tests {
         assert_eq!(key1, b"d");
         assert_eq!(value1.node_type(), NodeType::Int);
         assert_eq!(value1.int_value().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_list_size() {
+        for x in 0..100 {
+            let mut bencode_buf = "l".to_string();
+            for y in 0..x {
+                // bencode_buf += &format!("{}:{}", y, "X".repeat(y));
+                // bencode_buf += &format!("i{}e", y);
+                bencode_buf += &format!("li{}ee", y);
+            }
+            bencode_buf += "e";
+            let bencode = bdecode(bencode_buf.as_bytes()).unwrap();
+            let root_node = bencode.get_root();
+            println!("{:#?}", root_node);
+            assert_eq!(root_node.list_size().unwrap(), x)
+        }
     }
 }
