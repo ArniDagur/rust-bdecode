@@ -4,5 +4,14 @@ version = "0.1.0"
 authors = ["Árni Dagur <arni@dagur.eu>"]
 edition = "2018"
 
+[[bench]]
+name = "bdecode"
+path = "benchmarks/bdecode.rs"
+harness = false
+
 [dependencies]
 memchr = "*"
+# unicode-segmentation = "*"
+
+[dev-dependencies]
+criterion = "0.3"

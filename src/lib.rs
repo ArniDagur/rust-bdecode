@@ -332,17 +332,20 @@ impl<'a, 't> NodeChild<'a, 't> {
         let t_next_off = t_next.offset();
 
         let size = t_next_off - t_off - t_off_start;
+        // println!("{:?} {:?}", t, t_next);
+        // println!("{} -> {}", t_off, t_next_off);
+        // println!("{:?}", &self.buf[(t_off + t_off_start)..(t_off + t_off_start + size)]);
 
         Ok(&self.buf[(t_off + t_off_start)..(t_off + t_off_start + size)])
     }
 
-    pub fn int_value(&self) -> Result<i64, BencodeError> {
+    pub fn int_buf(&self) -> Result<&'a [u8], BencodeError> {
         if self.node_type() != NodeType::Int {
             return Err(BencodeError::TypeError);
         }
         let t = &self.root_tokens[self.token_idx];
         let t_off = t.offset();
-        assert_eq!(self.buf[t_off], b'i');
+        debug_assert_eq!(self.buf[t_off], b'i');
 
         let t_next = &self.root_tokens[self.token_idx + 1];
         let t_next_off = t_next.offset();
@@ -352,8 +355,168 @@ impl<'a, 't> NodeChild<'a, 't> {
         let size = t_next_off - 2 - t_off;
 
         let int_start = t_off + 1;
-        Ok(decode_int(&self.buf[int_start..(int_start + size)])?)
+        Ok(&self.buf[int_start..(int_start + size)])
     }
+
+    pub fn int_value(&self) -> Result<i64, BencodeError> {
+        Ok(decode_int(self.int_buf()?)?)
+    }
+
+    fn line_length(&self, limit: usize) -> Option<usize> {
+        let mut length = 0;
+        match self.node_type() {
+            NodeType::List => {
+                length += 4;
+                if length > limit {
+                    return None;
+                }
+                for i in 0..self.list_size().unwrap() {
+                    let list_length = self.list_at(i).unwrap().line_length(limit - length)?;
+                    length += list_length + 2;
+                }
+            }
+            NodeType::Dict => {
+                length += 4;
+                if length > limit {
+                    return None;
+                }
+                for i in 0..self.dict_size().unwrap() {
+                    let (key, value) = self.dict_at(i).unwrap();
+                    // I know that `key.len()` is the number of bytes in the
+                    // string, not the length of the string representation. It
+                    // should be good enough for our use-case however.
+                    length += 4 + key.len();
+                    if length > limit {
+                        return None;
+                    }
+                    let dict_length = value.line_length(limit - length)?;
+                    length += dict_length + 1;
+                }
+            }
+            NodeType::Str => {
+                length += 3 + self.string_buf().unwrap().len();
+            }
+            NodeType::Int => {
+                length += 2 + self.int_buf().unwrap().len();
+            }
+        }
+        if length > limit {
+            None
+        } else {
+            Some(length)
+        }
+    }
+
+    pub fn print_entry(
+        &self,
+        single_line: bool,
+        indent_level: usize,
+    ) -> String {
+        const TWO_SPACES: &'static str = "  ";
+        let ident_str = "\n".to_string() + &TWO_SPACES.repeat(indent_level);
+        let mut ret = String::new();
+        println!("printing {:?}", &self.root_tokens[self.token_idx]);
+        match self.node_type() {
+            NodeType::Int => {
+                ret += &String::from_utf8(self.int_buf().unwrap().to_vec()).unwrap();
+                // println!("result is {:?}", ret);
+                return ret;
+            }
+            NodeType::Str => {
+                // return String::from_utf8_lossy(self.string_buf().unwrap()).to_string();
+                ret += &print_string(self.string_buf().unwrap(), single_line);
+                // println!("result is {:?}", ret);
+                return ret;
+            }
+            NodeType::List => {
+                ret.push('[');
+                let one_liner = self.line_length(200).is_none() || single_line;
+                if !one_liner {
+                    ret.push_str(&ident_str);
+                }
+                for i in 0..self.list_size().unwrap() {
+                    if (i == 0) && one_liner {
+                        ret.push(' ');
+                    }
+                    let list_elem = self.list_at(i).unwrap();
+                    // ret.push_str(&list_elem.print_entry(single_line, indent_level + 1));
+                    ret.push_str("list item");
+                    if (i + 1) < self.list_size().unwrap() {
+                        ret.push(',');
+                        if one_liner {
+                            ret.push(' ');
+                        } else {
+                            ret.push_str(&ident_str);
+                        }
+                    } else {
+                        // TODO: Simplify this. It's obvious how you do it.
+                        if one_liner {
+                            ret.push(' ');
+                        } else {
+                            ret.push_str(&ident_str);
+                        }
+                    }
+                }
+                ret.push(']');
+                // println!("result is {:?}", ret);
+                return ret;
+            }
+            NodeType::Dict => {
+                ret.push('{');
+
+                let one_liner = self.line_length(200).is_none() || single_line;
+                if !one_liner {
+                    ret.push_str(&ident_str);
+                }
+                for i in 0..self.dict_size().unwrap() {
+                    if (i == 0) && one_liner {
+                        ret.push(' ');
+                    }
+                    let (key, value) = self.dict_at(i).unwrap();
+                    ret += &String::from_utf8_lossy(key);
+                    ret.push_str(": ");
+                    ret.push_str(&value.print_entry(single_line, indent_level + 1));
+                    if (i + 1) < self.dict_size().unwrap() {
+                        ret.push(',');
+                        if one_liner {
+                            ret.push(' ');
+                        } else {
+                            ret.push_str(&ident_str);
+                        }
+                    } else {
+                        // TODO: Simplify this. It's obvious how you do it.
+                        if one_liner {
+                            ret.push(' ');
+                        } else {
+                            ret.push_str(&ident_str);
+                        }
+                    }
+                }
+                ret.push('}');
+                // println!("result is {:?}", ret);
+                return ret;
+            }
+        }
+    }
+}
+
+fn print_string(buf: &[u8], single_line: bool) -> String {
+    let mut res = String::new();
+    res += "'";
+    for &c in buf {
+        if (c >= 32) && (c < 127) {
+            if c == ('\\' as u8) {
+                res.push_str("\\\\");
+            } else {
+                res.push(c as char);
+            }
+        } else {
+            // res.push_str("\\?");
+            res.push_str(&format!("\\[{}]", c))
+        }
+    }
+    res += "'";
+    return res;
 }
 
 pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Node<'a>, BDecodeError> {
