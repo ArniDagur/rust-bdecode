@@ -468,9 +468,8 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
         return Err(BDecodeError::UnexpectedEof);
     }
     let mut sp: usize = 0;
-    let mut stack: Vec<StackFrame> = Vec::new();
-    // let mut stack:: Vec<StackFrame> = Vec::with_
-    let mut tokens: Vec<Token> = Vec::new();
+    let mut stack: Vec<StackFrame> = Vec::with_capacity(4);
+    let mut tokens: Vec<Token> = Vec::with_capacity(16);
     let mut off = 0;
     while off < buf.len() {
         let byte = buf[off];
@@ -495,7 +494,6 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                 let new_frame =
                     StackFrame::new(tokens.len().try_into().unwrap(), StackFrameState::Key);
                 stack.push(new_frame);
-                // stack[sp] = new_frame;
                 sp += 1;
                 // we push it into the stack so that we know where to fill
                 // in the next_node field once we pop this node off the stack.
@@ -508,7 +506,6 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                 let new_frame =
                     StackFrame::new(tokens.len().try_into().unwrap(), StackFrameState::Key);
                 stack.push(new_frame);
-                // stack[sp] = new_frame;
                 sp += 1;
                 // we push it into the stack so that we know where to fill
                 // in the next_node field once we pop this node off the stack.
