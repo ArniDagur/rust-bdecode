@@ -21,38 +21,28 @@ pub fn is_numeric(byte: u8) -> bool {
     (48 <= byte) && (byte <= 57)
 }
 
-const MAX_BYTES_COMMON: [char; 18] = [
-    '9', '2', '2', '3', '3', '7', '2', '0', '3', '6', '8', '5', '4', '7', '7', '5', '8', '0',
-];
-
-fn will_integer_fit_i64(bytes: &[u8], negative: bool) -> bool {
-    let num_digits = bytes.len();
-    if num_digits > 20 {
-        return false;
-    } else if num_digits <= 18 {
-        return true;
-    }
-    // The reason for this variable assignment is to prevent a bounds check
-    // below
-    let last_byte = bytes[18];
-    for (&byte, max_byte) in bytes[..18]
-        .iter()
-        .zip(MAX_BYTES_COMMON.iter().map(|c| *c as u8))
-    {
-        if byte > max_byte {
-            return false;
-        } else if byte < max_byte {
-            return true;
-        }
-    }
-    let last_byte_max = ('7' as u8) + (negative as u8);
-    last_byte <= last_byte_max
+/// Given a byte string representation of a Bencoded integer, without a leading
+/// minus sign for negative numbers, check whether there are any leading zeroes.
+///
+/// # Examples:
+/// | Integer | Numeric Part | Leading zero   |
+/// +---------+--------------+----------------+
+/// | -4      | 4            | no             |
+/// | 4       | 4            | no             |
+/// | -04     | 04           | yes            |
+/// | 04      | 04           | yes            |
+/// | 0       | 0            | no (exception) |
+/// | 00      | 00           | yes            |
+#[inline(always)]
+fn contains_leading_zeroes(numeric_part: &[u8]) -> bool {
+    (numeric_part.len() >= 2) && (numeric_part[0] == b'0')
 }
 
 /// finds the end of an integer and verifies that it looks valid this does
 /// not detect all overflows, just the ones that are an order of magnitude
 /// beyond. Exact overflow checking is done when the integer value is queried
 /// from a bdecode_node.
+#[inline(always)]
 pub fn check_integer(bytes: &[u8]) -> Result<(), BDecodeError> {
     if bytes.len() == 0 {
         return Err(BDecodeError::UnexpectedEof);
@@ -66,21 +56,14 @@ pub fn check_integer(bytes: &[u8]) -> Result<(), BDecodeError> {
     if !looks_like_a_number {
         return Err(BDecodeError::ExpectedDigit);
     }
-    if !will_integer_fit_i64(numeric_part, negative) {
-        return Err(BDecodeError::Overflow);
+    if contains_leading_zeroes(numeric_part) {
+        return Err(BDecodeError::LeadingZero);
     }
     Ok(())
 }
 
 #[inline(always)]
 fn decode_int_no_sign(bytes: &[u8], negative: bool) -> Result<i64, BDecodeError> {
-    if (bytes.len() == 1) && (bytes[0] == 48) {
-        // This is the only case where a zero is allowed, without a non-zero
-        // character coming first. We make this a special case to simplify
-        // the leading-zero detection logic below.
-        return Ok(0);
-    }
-    let mut has_encountered_nonzero = false;
     let mut result: i64 = 0;
     for &byte in bytes {
         if !is_numeric(byte) {
@@ -88,14 +71,6 @@ fn decode_int_no_sign(bytes: &[u8], negative: bool) -> Result<i64, BDecodeError>
         }
         // This substraction never underflows because of the check above.
         let digit = byte - 48;
-        // Check if we have a leading zero, e.g. "01"
-        if digit == 0 {
-            if !has_encountered_nonzero {
-                return Err(BDecodeError::LeadingZero);
-            }
-        } else {
-            has_encountered_nonzero = true;
-        }
         result = match result.checked_mul(10) {
             Some(result) => result,
             None => return Err(BDecodeError::Overflow),
@@ -115,10 +90,8 @@ fn decode_int_no_sign(bytes: &[u8], negative: bool) -> Result<i64, BDecodeError>
     return Ok(result);
 }
 
+#[inline(always)]
 pub fn decode_int(bytes: &[u8]) -> Result<i64, BDecodeError> {
-    if bytes.is_empty() {
-        return Err(BDecodeError::UnexpectedEof);
-    }
     let (negative, integer) = match bytes[0] {
         b'-' => (true, decode_int_no_sign(&bytes[1..], true)?),
         b'0'..=b'9' => (false, decode_int_no_sign(bytes, false)?),
@@ -200,6 +173,18 @@ mod tests {
             let int_string_4 = "+".to_owned() + &n.to_string();
             let int_bytes_4 = int_string_4.as_bytes();
             assert!(decode_int(int_bytes_4).is_err());
+        }
+    }
+
+    #[test]
+    fn test_contains_leading_zeroes() {
+        const BAD_EXAMPLES: &[&[u8]] = &[b"04", b"00"];
+        const GOOD_EXAMPLES: &[&[u8]] = &[b"4", b"0"];
+        for &bad in BAD_EXAMPLES {
+            assert!(contains_leading_zeroes(bad));
+        }
+        for &good in GOOD_EXAMPLES {
+            assert!(!contains_leading_zeroes(good));
         }
     }
 }

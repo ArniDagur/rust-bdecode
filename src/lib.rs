@@ -525,7 +525,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                 check_integer(&buf[(off + 1)..end_index]).map_err(|_| BDecodeError::Overflow)?;
                 let new_token = Token::new(off, TokenType::Int, 1, 1)?;
                 tokens.push(new_token);
-                assert_eq!(buf[end_index], b'e');
+                debug_assert_eq!(buf[end_index], b'e');
                 off = end_index + 1;
             }
             b'e' => {
@@ -552,7 +552,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                 let next_item = tokens.len() - top;
                 tokens[top].set_next_item(next_item)?;
                 // and pop it from the stack.
-                assert!(sp > 0);
+                debug_assert!(sp > 0);
                 sp -= 1;
                 off += 1;
             }
@@ -566,8 +566,9 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                     }
                 };
                 debug_assert_eq!(buf[colon_index], b':');
-                let string_length: usize = decode_int(&buf[off..colon_index])
-                    .map_err(|_| BDecodeError::Overflow)?
+                let int_buf = &buf[off..colon_index];
+                check_integer(int_buf)?;
+                let string_length: usize = decode_int(int_buf)?
                     .try_into()
                     .map_err(|_| BDecodeError::Overflow)?;
                 // FIXME: Is this needed in my code?
