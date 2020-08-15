@@ -7,21 +7,27 @@ fuzz_target!(|data: &[u8]| {
         let root_node = bencode.get_root();
         match root_node.node_type() {
             NodeType::Dict => {
-                root_node.dict_size().unwrap();
-                root_node.dict_at(0);
-                root_node.dict_at(1);
-                root_node.dict_find(b"abc");
+                let dict = root_node.as_dict().unwrap();
+                dict.len();
+                // These return Result<T> may either succeed or fail, but not
+                // panic.
+                dict.get(0);
+                dict.get(0);
+                dict.find(b"abc");
             }
             NodeType::List => {
-                root_node.list_size().unwrap();
-                root_node.list_at(0);
-                root_node.list_at(1);
+                let list = root_node.as_list().unwrap();
+                list.len();
+                list.get(0);
+                list.get(1);
             }
             NodeType::Int => {
-                root_node.int_value();
+                let int = root_node.as_int().unwrap();
+                int.value();
             }
             NodeType::Str => {
-                root_node.string_buf();
+                let string = root_node.as_string().unwrap();
+                string.as_bytes();
             }
             _ => unreachable!(),
         }
