@@ -109,7 +109,7 @@ mod tests {
 
     macro_rules! test_invalid_cases {
         ($($x: expr),*) => {{
-            $(assert!(decode_int($x).is_err());)*
+            $(assert!(check_integer($x).is_err());)*
         }}
     }
 
@@ -117,6 +117,7 @@ mod tests {
     fn assert_roundtrip(number: i64, result: bool) {
         let int_string = number.to_string();
         let int_bytes = int_string.as_bytes();
+        assert!(check_integer(int_bytes).is_ok());
         assert_eq!(decode_int(int_bytes).unwrap() == number, result);
     }
 
@@ -162,17 +163,17 @@ mod tests {
             // Do the same but add leading whitespace. This should fail.
             let int_string_2 = " ".to_owned() + &n.to_string();
             let int_bytes_2 = int_string_2.as_bytes();
-            assert!(decode_int(int_bytes_2).is_err());
+            assert!(check_integer(int_bytes_2).is_err());
 
             // Do the same but add a leading zero. This should fail.
             let int_string_3 = "0".to_owned() + &n.to_string();
             let int_bytes_3 = int_string_3.as_bytes();
-            assert!(decode_int(int_bytes_3).is_err());
+            assert!(check_integer(int_bytes_3).is_err());
 
             // Do the same but add a leading plus sign. This should fail.
             let int_string_4 = "+".to_owned() + &n.to_string();
             let int_bytes_4 = int_string_4.as_bytes();
-            assert!(decode_int(int_bytes_4).is_err());
+            assert!(check_integer(int_bytes_4).is_err());
         }
     }
 

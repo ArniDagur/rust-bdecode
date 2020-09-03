@@ -1,15 +1,18 @@
+mod iterators;
 mod parse_int;
 mod stack_frame;
 mod token;
 
 use memchr::memchr;
 
+use iterators::{BencodeDictIter, BencodeListIter};
 use parse_int::{check_integer, decode_int, is_numeric};
 use stack_frame::{StackFrame, StackFrameState};
 use token::{Token, TokenType};
 
 use std::cell::Cell;
 use std::convert::TryInto;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BDecodeError {
@@ -74,7 +77,7 @@ impl<'a> Bencode<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BencodeList<'a, 't> {
     buf: &'a [u8],
     /// this points to the root node's token vector
@@ -157,6 +160,15 @@ impl<'a, 't> BencodeList<'a, 't> {
         size
     }
 
+    pub fn iter(&self) -> BencodeListIter<'a, 't> {
+        BencodeListIter::new(
+            self.buf,
+            self.root_tokens,
+            self.token_idx + 1,
+            self.cached_size.get().map(|size| size as u32),
+        )
+    }
+
     fn create_any(&self, token_idx: usize) -> BencodeAny<'a, 't> {
         BencodeAny {
             buf: self.buf,
@@ -168,7 +180,13 @@ impl<'a, 't> BencodeList<'a, 't> {
     }
 }
 
-#[derive(Debug, Clone)]
+impl<'a, 't> fmt::Debug for BencodeList<'a, 't> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct BencodeDict<'a, 't> {
     buf: &'a [u8],
     /// this points to the root node's token vector
@@ -310,6 +328,15 @@ impl<'a, 't> BencodeDict<'a, 't> {
         size
     }
 
+    pub fn iter(&self) -> BencodeDictIter<'a, 't> {
+        BencodeDictIter::new(
+            self.buf,
+            self.root_tokens,
+            self.token_idx + 1,
+            self.cached_size.get().map(|size| size as u32),
+        )
+    }
+
     fn create_any(&self, token_idx: usize) -> BencodeAny<'a, 't> {
         BencodeAny {
             buf: self.buf,
@@ -321,7 +348,13 @@ impl<'a, 't> BencodeDict<'a, 't> {
     }
 }
 
-#[derive(Debug, Clone)]
+impl<'a, 't> fmt::Debug for BencodeDict<'a, 't> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct BencodeInt<'a, 't> {
     buf: &'a [u8],
     /// this points to the root node's token vector
@@ -355,7 +388,13 @@ impl<'a, 't> BencodeInt<'a, 't> {
     }
 }
 
-#[derive(Debug, Clone)]
+impl<'a, 't> fmt::Debug for BencodeInt<'a, 't> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(std::str::from_utf8(self.as_bytes()).unwrap())
+    }
+}
+
+#[derive(Clone)]
 pub struct BencodeString<'a, 't> {
     buf: &'a [u8],
     /// this points to the root node's token vector
@@ -381,7 +420,13 @@ impl<'a, 't> BencodeString<'a, 't> {
     }
 }
 
-#[derive(Debug, Clone)]
+impl<'a, 't> fmt::Debug for BencodeString<'a, 't> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("BencodeString({:?})", self.as_bytes()))
+    }
+}
+
+#[derive(Clone)]
 pub struct BencodeAny<'a, 't> {
     buf: &'a [u8],
     /// this points to the root node's token vector
@@ -397,6 +442,29 @@ pub struct BencodeAny<'a, 't> {
     /// the number of elements in this list or dict (computed on the first
     /// call to dict_size() or list_size())
     size: Cell<Option<usize>>,
+}
+
+impl<'a, 't> fmt::Debug for BencodeAny<'a, 't> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.node_type() {
+            NodeType::Dict => {
+                let self_dict = self.as_dict().unwrap();
+                self_dict.fmt(f)
+            }
+            NodeType::List => {
+                let self_list = self.as_list().unwrap();
+                self_list.fmt(f)
+            }
+            NodeType::Int => {
+                let self_int = self.as_int().unwrap();
+                self_int.fmt(f)
+            }
+            NodeType::Str => {
+                let self_str = self.as_string().unwrap();
+                self_str.fmt(f)
+            }
+        }
+    }
 }
 
 impl<'a, 't> BencodeAny<'a, 't> {
@@ -717,7 +785,7 @@ mod tests {
             bencode_buf += "e";
             let bencode = bdecode(bencode_buf.as_bytes()).unwrap();
             let root_node = bencode.get_root();
-            println!("{:#?}", root_node);
+            println!("{:?}", root_node);
             assert_eq!(root_node.as_list().unwrap().len(), x)
         }
     }
