@@ -1,6 +1,9 @@
 use std::convert::TryInto;
 use std::fmt;
 
+const TOKEN_MASK: u32 = u32::MAX ^ 1;
+const STATE_MASK: u32 = 1;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum StackFrameState {
     Key = 0,
@@ -13,33 +16,30 @@ pub struct StackFrame {
 }
 
 impl StackFrame {
-    const TOKEN_MASK: u32 = u32::MAX ^ 1;
-    const STATE_MASK: u32 = 1;
-
     pub fn new(token: u32, state: StackFrameState) -> StackFrame {
         StackFrame {
             inner: (token << 1) | state as u32,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn token(&self) -> usize {
-        let token_u32 = (self.inner & Self::TOKEN_MASK) >> 1;
+        let token_u32 = (self.inner & TOKEN_MASK) >> 1;
         token_u32.try_into().unwrap()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn state(&self) -> StackFrameState {
-        if (self.inner & Self::STATE_MASK) == 0 {
+        if (self.inner & STATE_MASK) == 0 {
             StackFrameState::Key
         } else {
             StackFrameState::Value
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn toggle_state(&mut self) {
-        self.inner = self.inner ^ 1;
+        self.inner ^= 1;
     }
 }
 

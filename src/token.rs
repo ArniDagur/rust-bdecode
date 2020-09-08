@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::BDecodeError;
+use super::BdecodeError;
 
 const OFFSET_MASK: u64 = 0xFFFF_FFF8_0000_0000;
 const NEXT_ITEM_MASK: u64 = 0x0000_0007_FFFF_FFC0;
@@ -38,12 +38,12 @@ impl Token {
         token_type: TokenType,
         next_item: usize,
         header: usize,
-    ) -> Result<Token, BDecodeError> {
+    ) -> Result<Token, BdecodeError> {
         if (offset > Self::MAX_OFFSET)
             || (next_item > Self::MAX_NEXT_ITEM)
             || (header > Self::MAX_HEADER)
         {
-            return Err(BDecodeError::LimitExceeded);
+            return Err(BdecodeError::LimitExceeded);
         }
 
         let inner = ((offset as u64) << OFFSET_OFFSET)
@@ -54,26 +54,26 @@ impl Token {
         Ok(Token { inner })
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn offset(&self) -> usize {
         ((self.inner & OFFSET_MASK) >> OFFSET_OFFSET) as usize
     }
 
-    /// if this node is a member of a list, 'next_item' is the number of nodes
+    /// If this node is a member of a list, `next_item` is the number of nodes
     /// to jump forward in th node array to get to the next item in the list.
     /// if it's a key in a dictionary, it's the number of step forwards to get
     /// to its corresponding value. If it's a value in a dictionary, it's the
     /// number of steps to the next key, or to the end node.
     /// this is the _relative_ offset to the next node
-    #[inline(always)]
+    #[inline]
     pub fn next_item(&self) -> usize {
         ((self.inner & NEXT_ITEM_MASK) >> NEXT_ITEM_OFFSET) as usize
     }
 
-    #[inline(always)]
-    pub fn set_next_item(&mut self, new_next_item: usize) -> Result<(), BDecodeError> {
+    #[inline]
+    pub fn set_next_item(&mut self, new_next_item: usize) -> Result<(), BdecodeError> {
         if new_next_item > Self::MAX_NEXT_ITEM {
-            return Err(BDecodeError::LimitExceeded);
+            return Err(BdecodeError::LimitExceeded);
         }
         let inner_zeroed_ni = self.inner & (!NEXT_ITEM_MASK);
         self.inner = inner_zeroed_ni | ((new_next_item as u64) << NEXT_ITEM_OFFSET);
@@ -85,7 +85,7 @@ impl Token {
     /// used for other types. Essentially this is the length of the length prefix
     /// and the colon. Since a string always has at least one character of length
     /// prefix and always a colon, those 2 characters are implied.
-    #[inline(always)]
+    #[inline]
     pub fn header(&self) -> usize {
         ((self.inner & HEADER_MASK) >> HEADER_OFFSET) as usize
     }
@@ -103,7 +103,7 @@ impl Token {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn start_offset(&self) -> usize {
         // Shouldn't this just be an if statement based on type? One where we
         // conditionally plus 2?

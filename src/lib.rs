@@ -1,3 +1,22 @@
+//! A Bencode decoder in Rust.
+#![deny(
+    missing_docs,
+    future_incompatible,
+    nonstandard_style,
+    rust_2018_idioms,
+    missing_copy_implementations,
+    trivial_casts,
+    trivial_numeric_casts,
+    unsafe_code,
+    unused_qualifications
+)]
+#![deny(
+    clippy::correctness,
+    clippy::style,
+    clippy::perf,
+)]
+
+
 mod iterators;
 mod parse_int;
 mod stack_frame;
@@ -14,8 +33,9 @@ use std::cell::Cell;
 use std::convert::TryInto;
 use std::fmt;
 
+/// Error which can occur when calling `bdecode()`.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum BDecodeError {
+pub enum BdecodeError {
     /// Expected digit in bencoded string
     ExpectedDigit,
     /// Expected colon in bencoded string
@@ -30,42 +50,43 @@ pub enum BDecodeError {
     LimitExceeded,
     /// Integer overflow
     Overflow,
-    // Leading zero in integer
+    /// Leading zero in integer
     LeadingZero,
-    // Integer is negative zero
+    /// Integer is negative zero
     NegativeZero,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum BencodeError {
-    TypeError,
-    IndexError,
-    ParseError(BDecodeError),
-}
-
-impl From<BDecodeError> for BencodeError {
-    fn from(error: BDecodeError) -> BencodeError {
-        BencodeError::ParseError(error)
-    }
-}
-
+/// The type of a node
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum NodeType {
+    /// This node is a dictionary
     Dict,
+    /// This node is a list
     List,
+    /// This node is a string
     Str,
+    /// This node is a integer
     Int,
 }
 
+#[derive(Clone)]
+/// Struct which owns the bencode tokens. Call `get_root()` to receive a
+/// handle for the root object.
 pub struct Bencode<'a> {
     buf: &'a [u8],
-    /// if this is the root node, that owns all the tokens, they live in this
-    /// vector. If this is a sub-node, this field is not used, instead the
-    /// `root_tokens` reference points to the root node's token.
     tokens: Vec<Token>,
 }
 
+impl<'a> fmt::Debug for Bencode<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Bencode")
+            .field("content", &self.get_root())
+            .finish()
+    }
+}
+
 impl<'a> Bencode<'a> {
+    /// Returns a handle on the root object.
     pub fn get_root<'t>(&'t self) -> BencodeAny<'a, 't> {
         BencodeAny {
             buf: self.buf,
@@ -77,6 +98,7 @@ impl<'a> Bencode<'a> {
     }
 }
 
+/// A bencoded list
 #[derive(Clone)]
 pub struct BencodeList<'a, 't> {
     buf: &'a [u8],
@@ -96,8 +118,7 @@ pub struct BencodeList<'a, 't> {
 }
 
 impl<'a, 't> BencodeList<'a, 't> {
-    /// Returns the item in the list at the given index. Returns an error if
-    /// this node is not a list.
+    /// Returns the item in the list at the given index.
     pub fn get(&self, index: usize) -> Option<BencodeAny<'a, 't>> {
         let mut token = self.token_idx + 1;
         let mut item = 0;
@@ -135,8 +156,7 @@ impl<'a, 't> BencodeList<'a, 't> {
         Some(self.create_any(token))
     }
 
-    /// Returns how many items there are in this list. Returns an error if
-    /// this node is not a list.
+    /// Returns how many items there are in this list.
     pub fn len(&self) -> usize {
         // Maybe we have the size cached
         if let Some(size) = self.cached_size.get() {
@@ -160,6 +180,12 @@ impl<'a, 't> BencodeList<'a, 't> {
         size
     }
 
+    /// Returns true if the length of this list is zero.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns an iterator over the list's items.
     pub fn iter(&self) -> BencodeListIter<'a, 't> {
         BencodeListIter::new(
             self.buf,
@@ -173,7 +199,7 @@ impl<'a, 't> BencodeList<'a, 't> {
         BencodeAny {
             buf: self.buf,
             root_tokens: self.root_tokens,
-            token_idx: token_idx,
+            token_idx,
             cached_lookup: Cell::new(None),
             size: Cell::new(None),
         }
@@ -186,6 +212,7 @@ impl<'a, 't> fmt::Debug for BencodeList<'a, 't> {
     }
 }
 
+/// A bencoded dictionary
 #[derive(Clone)]
 pub struct BencodeDict<'a, 't> {
     buf: &'a [u8],
@@ -205,6 +232,8 @@ pub struct BencodeDict<'a, 't> {
 }
 
 impl<'a, 't> BencodeDict<'a, 't> {
+    /// Get the key-value pair at the given index. Returns `None` if index is
+    /// out of bounds.
     pub fn get(&self, index: usize) -> Option<(&'a [u8], BencodeAny<'a, 't>)> {
         let mut token = self.token_idx + 1;
         let mut item = 0;
@@ -258,6 +287,8 @@ impl<'a, 't> BencodeDict<'a, 't> {
         Some((key, value_node))
     }
 
+    /// Get the value corresponding to the given key. Returns `None` if index
+    /// is out of bounds.
     pub fn find(&self, key: &[u8]) -> Option<BencodeAny<'a, 't>> {
         let mut token = self.token_idx + 1;
 
@@ -298,6 +329,7 @@ impl<'a, 't> BencodeDict<'a, 't> {
         None
     }
 
+    /// Returns how many items there are in this dictionary.
     pub fn len(&self) -> usize {
         // Maybe we have the size cached
         if let Some(size) = self.cached_size.get() {
@@ -328,6 +360,12 @@ impl<'a, 't> BencodeDict<'a, 't> {
         size
     }
 
+    /// Returns true if the length of this dictionary is zero.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns an iterator over the key-value pairs in this dictionary.
     pub fn iter(&self) -> BencodeDictIter<'a, 't> {
         BencodeDictIter::new(
             self.buf,
@@ -341,7 +379,7 @@ impl<'a, 't> BencodeDict<'a, 't> {
         BencodeAny {
             buf: self.buf,
             root_tokens: self.root_tokens,
-            token_idx: token_idx,
+            token_idx,
             cached_lookup: Cell::new(None),
             size: Cell::new(None),
         }
@@ -354,6 +392,7 @@ impl<'a, 't> fmt::Debug for BencodeDict<'a, 't> {
     }
 }
 
+/// A bencoded integer
 #[derive(Clone)]
 pub struct BencodeInt<'a, 't> {
     buf: &'a [u8],
@@ -366,6 +405,8 @@ pub struct BencodeInt<'a, 't> {
 }
 
 impl<'a, 't> BencodeInt<'a, 't> {
+    /// Returns a slice into the original input buffer of the bytes that make
+    /// up this integer.
     pub fn as_bytes(&self) -> &'a [u8] {
         let t = &self.root_tokens[self.token_idx];
         let t_off = t.offset();
@@ -383,7 +424,9 @@ impl<'a, 't> BencodeInt<'a, 't> {
         &self.buf[int_start..(int_start + size)]
     }
 
-    pub fn value(&self) -> Result<i64, BencodeError> {
+    /// Get the integer value as an `i64`. This will be depricated in favour
+    /// of the `From` trait.
+    pub fn value(&self) -> Result<i64, BdecodeError> {
         Ok(decode_int(self.as_bytes())?)
     }
 }
@@ -394,6 +437,7 @@ impl<'a, 't> fmt::Debug for BencodeInt<'a, 't> {
     }
 }
 
+/// A bencoded string
 #[derive(Clone)]
 pub struct BencodeString<'a, 't> {
     buf: &'a [u8],
@@ -406,6 +450,8 @@ pub struct BencodeString<'a, 't> {
 }
 
 impl<'a, 't> BencodeString<'a, 't> {
+    /// Returns a slice into the original input buffer of the bytes that make
+    /// up this string.
     pub fn as_bytes(&self) -> &'a [u8] {
         let t = &self.root_tokens[self.token_idx];
         let t_off = t.offset();
@@ -426,6 +472,9 @@ impl<'a, 't> fmt::Debug for BencodeString<'a, 't> {
     }
 }
 
+/// A bencoded object which could be of any type. You probably want to call
+/// one of `as_list()`, `as_dict()`, `as_int()`, `as_string()` to convert this
+/// struct into a concrete type.
 #[derive(Clone)]
 pub struct BencodeAny<'a, 't> {
     buf: &'a [u8],
@@ -468,6 +517,7 @@ impl<'a, 't> fmt::Debug for BencodeAny<'a, 't> {
 }
 
 impl<'a, 't> BencodeAny<'a, 't> {
+    /// The type of the bencoded object.
     pub fn node_type(&self) -> NodeType {
         let token_type = self.root_tokens[self.token_idx].token_type();
         match token_type {
@@ -479,6 +529,8 @@ impl<'a, 't> BencodeAny<'a, 't> {
         }
     }
 
+    /// Try to convert this struct into a `BencodeList`. This fails if and
+    /// only if the underlying bencoded object is not a list.
     pub fn as_list(&self) -> Option<BencodeList<'a, 't>> {
         if self.node_type() != NodeType::List {
             return None;
@@ -492,6 +544,8 @@ impl<'a, 't> BencodeAny<'a, 't> {
         })
     }
 
+    /// Try to convert this struct into a `BencodeDict`. This fails if and
+    /// only if the underlying bencoded object is not a dictionary.
     pub fn as_dict(&self) -> Option<BencodeDict<'a, 't>> {
         if self.node_type() != NodeType::Dict {
             return None;
@@ -505,6 +559,8 @@ impl<'a, 't> BencodeAny<'a, 't> {
         })
     }
 
+    /// Try to convert this struct into a `BencodeInt`. This fails if and
+    /// only if the underlying bencoded object is not an integer.
     pub fn as_int(&self) -> Option<BencodeInt<'a, 't>> {
         if self.node_type() != NodeType::Int {
             return None;
@@ -516,6 +572,8 @@ impl<'a, 't> BencodeAny<'a, 't> {
         })
     }
 
+    /// Try to convert this struct into a `BencodeString`. This fails if and
+    /// only if the underlying bencoded object is not a string.
     pub fn as_string(&self) -> Option<BencodeString<'a, 't>> {
         if self.node_type() != NodeType::Str {
             return None;
@@ -528,12 +586,13 @@ impl<'a, 't> BencodeAny<'a, 't> {
     }
 }
 
-pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
+/// Decode a bencoded buffer into a `Bencode` struct.
+pub fn bdecode(buf: &[u8]) -> Result<Bencode<'_>, BdecodeError> {
     if buf.len() > Token::MAX_OFFSET {
-        return Err(BDecodeError::LimitExceeded);
+        return Err(BdecodeError::LimitExceeded);
     }
-    if buf.len() == 0 {
-        return Err(BDecodeError::UnexpectedEof);
+    if buf.is_empty() {
+        return Err(BdecodeError::UnexpectedEof);
     }
     let mut sp: usize = 0;
     let mut stack: Vec<StackFrame> = Vec::with_capacity(4);
@@ -547,13 +606,12 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
         // every other node is a string.
         if (current_frame > 0)
             && tokens[stack[current_frame - 1].token()].token_type() == TokenType::Dict
+            && stack[current_frame - 1].state() == StackFrameState::Key
         {
-            if stack[current_frame - 1].state() == StackFrameState::Key {
-                // the current parent is a dict and we are parsing a key.
-                // only allow a digit (for a string) or 'e' to terminate
-                if !is_numeric(byte) && byte != b'e' {
-                    return Err(BDecodeError::ExpectedDigit);
-                }
+            // the current parent is a dict and we are parsing a key.
+            // only allow a digit (for a string) or 'e' to terminate
+            if !is_numeric(byte) && byte != b'e' {
+                return Err(BdecodeError::ExpectedDigit);
             }
         }
 
@@ -586,11 +644,11 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                 let end_index = match memchr(b'e', &buf[off..]) {
                     Some(idx) => off + idx,
                     None => {
-                        return Err(BDecodeError::UnexpectedEof);
+                        return Err(BdecodeError::UnexpectedEof);
                     }
                 };
                 // +1 here to point to the first digit, rather than 'i'
-                check_integer(&buf[(off + 1)..end_index]).map_err(|_| BDecodeError::Overflow)?;
+                check_integer(&buf[(off + 1)..end_index])?;
                 let new_token = Token::new(off, TokenType::Int, 1, 1)?;
                 tokens.push(new_token);
                 debug_assert_eq!(buf[end_index], b'e');
@@ -599,7 +657,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
             b'e' => {
                 // end of list or dict
                 if sp == 0 {
-                    return Err(BDecodeError::UnexpectedEof);
+                    return Err(BdecodeError::UnexpectedEof);
                 }
                 if sp > 0
                     && (tokens[stack[sp - 1].token()].token_type() == TokenType::Dict)
@@ -607,7 +665,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                 {
                     // this means we're parsing a dictionary and about to parse a
                     // value associated with a key. Instead, we got a termination
-                    return Err(BDecodeError::ExpectedValue);
+                    return Err(BdecodeError::ExpectedValue);
                 }
                 // insert end-of-sequence token
                 let end_token = Token::new(off, TokenType::End, 1, 0)?;
@@ -630,7 +688,7 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                 let colon_index = match memchr(b':', &buf[off..]) {
                     Some(idx) => off + idx,
                     None => {
-                        return Err(BDecodeError::ExpectedColon);
+                        return Err(BdecodeError::ExpectedColon);
                     }
                 };
                 debug_assert_eq!(buf[colon_index], b':');
@@ -638,18 +696,18 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
                 check_integer(int_buf)?;
                 let string_length: usize = decode_int(int_buf)?
                     .try_into()
-                    .map_err(|_| BDecodeError::Overflow)?;
+                    .map_err(|_| BdecodeError::Overflow)?;
                 // FIXME: Is this needed in my code?
                 off = colon_index + 1;
                 if off >= buf.len() {
-                    return Err(BDecodeError::UnexpectedEof);
+                    return Err(BdecodeError::UnexpectedEof);
                 }
                 // remaining buffer size
                 let remaining = buf.len() - off;
                 if string_length > remaining {
                     // The remaining buffer size is not big enough to fit a
                     // string that big.
-                    return Err(BDecodeError::UnexpectedEof);
+                    return Err(BdecodeError::UnexpectedEof);
                 }
 
                 let header_len = off - str_off - 2;
@@ -683,16 +741,13 @@ pub fn bdecode<'a, 't>(buf: &'a [u8]) -> Result<Bencode<'a>, BDecodeError> {
     }
 
     if sp > 0 {
-        return Err(BDecodeError::UnexpectedEof);
+        return Err(BdecodeError::UnexpectedEof);
     }
 
     // one final end token
     tokens.push(Token::new(off, TokenType::End, 0, 0)?);
 
-    Ok(Bencode {
-        buf,
-        tokens: tokens,
-    })
+    Ok(Bencode { buf, tokens })
 }
 
 #[cfg(test)]
