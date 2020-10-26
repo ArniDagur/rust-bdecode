@@ -1,7 +1,10 @@
 [package]
 name = "bdecode"
 version = "0.1.0"
+license = "MIT OR Apache-2.0"
 authors = ["Árni Dagur <arni@dagur.eu>"]
+description = "A Bencode decoder in Rust which uses the same algorithm as libtorrent."
+repository = "https://github.com/ArniDagur/rust-bdecode"
 edition = "2018"
 
 [[bench]]
@@ -10,7 +13,7 @@ path = "benchmarks/bdecode.rs"
 harness = false
 
 [dependencies]
-memchr = "*"
+memchr = "2"
 
 [dev-dependencies]
 criterion = "0.3"
