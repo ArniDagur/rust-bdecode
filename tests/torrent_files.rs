@@ -57,7 +57,7 @@ fn test_torrent_file_bytes(bytes: &[u8]) {
 
     // Check that creation time is above the year 2000
     let creation_date = top_level.find(b"creation date").unwrap().as_int().unwrap();
-    assert!(creation_date.value().unwrap() >= 946684800);
+    assert!(creation_date.as_i64().unwrap() >= 946684800);
 
     println!("{:#?}", top_level);
 }

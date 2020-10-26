@@ -10,12 +10,7 @@
     unsafe_code,
     unused_qualifications
 )]
-#![deny(
-    clippy::correctness,
-    clippy::style,
-    clippy::perf,
-)]
-
+#![deny(clippy::correctness, clippy::style, clippy::perf)]
 
 mod iterators;
 mod parse_int;
@@ -30,6 +25,7 @@ use stack_frame::{StackFrame, StackFrameState};
 use token::{Token, TokenType};
 
 use std::cell::Cell;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fmt;
 
@@ -392,7 +388,7 @@ impl<'a, 't> fmt::Debug for BencodeDict<'a, 't> {
     }
 }
 
-/// A bencoded integer
+/// A bencoded integer of arbitrary length.
 #[derive(Clone)]
 pub struct BencodeInt<'a, 't> {
     buf: &'a [u8],
@@ -424,18 +420,107 @@ impl<'a, 't> BencodeInt<'a, 't> {
         &self.buf[int_start..(int_start + size)]
     }
 
-    /// Get the integer value as an `i64`. This will be depricated in favour
-    /// of the `From` trait.
-    pub fn value(&self) -> Result<i64, BdecodeError> {
-        Ok(decode_int(self.as_bytes())?)
+    /// Returns a string slice which points to the region of the original
+    /// input buffer where this bencoded integer lives.
+    pub fn as_str(&self) -> &'a str {
+        std::str::from_utf8(self.as_bytes()).unwrap()
+    }
+
+    /// Convert this Bencoded integer to an `i8`.
+    pub fn as_i8(&self) -> Result<i8, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `i16`.
+    pub fn as_i16(&self) -> Result<i16, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `i32`.
+    pub fn as_i32(&self) -> Result<i32, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `i64`.
+    pub fn as_i64(&self) -> Result<i64, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `i128`.
+    pub fn as_i128(&self) -> Result<i128, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `isize`.
+    pub fn as_isize(&self) -> Result<isize, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `u8`.
+    pub fn as_u8(&self) -> Result<u8, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `u16`.
+    pub fn as_u16(&self) -> Result<u16, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `u32`.
+    pub fn as_u32(&self) -> Result<u32, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `u64`.
+    pub fn as_u64(&self) -> Result<u64, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `u128`.
+    pub fn as_u128(&self) -> Result<u128, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
+    }
+
+    /// Convert this Bencoded integer to an `usize`.
+    pub fn as_usize(&self) -> Result<usize, BdecodeError> {
+        Ok(TryFrom::try_from(self)?)
     }
 }
 
 impl<'a, 't> fmt::Debug for BencodeInt<'a, 't> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(std::str::from_utf8(self.as_bytes()).unwrap())
+        f.write_str(self.as_str())
     }
 }
+
+macro_rules! impl_tryfrom_bencodeint {
+    ($int_type:ty) => {
+        // I would implement the `as_$int_type` methods here, instead of
+        // duplicating code above, but Rust's macro system is not powerful
+        // enough yet.
+        impl<'a, 't> TryFrom<&BencodeInt<'a, 't>> for $int_type {
+            type Error = BdecodeError;
+
+            fn try_from(bencode_int: &BencodeInt<'a, 't>) -> Result<Self, Self::Error> {
+                <$int_type>::from_str_radix(bencode_int.as_str(), 10)
+                    .map_err(|_| BdecodeError::Overflow)
+            }
+        }
+    };
+}
+
+impl_tryfrom_bencodeint!(i8);
+impl_tryfrom_bencodeint!(i16);
+impl_tryfrom_bencodeint!(i32);
+impl_tryfrom_bencodeint!(i64);
+impl_tryfrom_bencodeint!(i128);
+impl_tryfrom_bencodeint!(isize);
+impl_tryfrom_bencodeint!(u8);
+impl_tryfrom_bencodeint!(u16);
+impl_tryfrom_bencodeint!(u32);
+impl_tryfrom_bencodeint!(u64);
+impl_tryfrom_bencodeint!(u128);
+impl_tryfrom_bencodeint!(usize);
 
 /// A bencoded string
 #[derive(Clone)]
@@ -815,7 +900,7 @@ mod tests {
         let (key00, value00) = value0.as_dict().unwrap().get(0).unwrap();
         assert_eq!(key00, b"b");
         assert_eq!(value00.node_type(), NodeType::Int);
-        assert_eq!(value00.as_int().unwrap().value().unwrap(), 1);
+        assert_eq!(value00.as_int().unwrap().as_i64().unwrap(), 1);
 
         let (key01, value01) = value0.as_dict().unwrap().get(1).unwrap();
         assert_eq!(key01, b"c");
@@ -825,7 +910,7 @@ mod tests {
         let (key1, value1) = root_node.as_dict().unwrap().get(1).unwrap();
         assert_eq!(key1, b"d");
         assert_eq!(value1.node_type(), NodeType::Int);
-        assert_eq!(value1.as_int().unwrap().value().unwrap(), 3);
+        assert_eq!(value1.as_int().unwrap().as_i64().unwrap(), 3);
     }
 
     #[test]
@@ -843,5 +928,25 @@ mod tests {
             println!("{:?}", root_node);
             assert_eq!(root_node.as_list().unwrap().len(), x)
         }
+    }
+
+    #[test]
+    fn test_bencode_int_as_type() {
+        let buf = b"i42e";
+        let bencode = bdecode(buf).unwrap();
+        let root_node = bencode.get_root();
+        let bencode_int = root_node.as_int().unwrap();
+        assert_eq!(bencode_int.as_i8().unwrap(), 42);
+        assert_eq!(bencode_int.as_i16().unwrap(), 42);
+        assert_eq!(bencode_int.as_i32().unwrap(), 42);
+        assert_eq!(bencode_int.as_i64().unwrap(), 42);
+        assert_eq!(bencode_int.as_i128().unwrap(), 42);
+        assert_eq!(bencode_int.as_isize().unwrap(), 42);
+        assert_eq!(bencode_int.as_u8().unwrap(), 42);
+        assert_eq!(bencode_int.as_u16().unwrap(), 42);
+        assert_eq!(bencode_int.as_u32().unwrap(), 42);
+        assert_eq!(bencode_int.as_u64().unwrap(), 42);
+        assert_eq!(bencode_int.as_u128().unwrap(), 42);
+        assert_eq!(bencode_int.as_usize().unwrap(), 42);
     }
 }
