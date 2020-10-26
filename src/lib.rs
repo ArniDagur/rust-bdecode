@@ -19,7 +19,7 @@ mod token;
 
 use memchr::memchr;
 
-use iterators::{BencodeDictIter, BencodeListIter};
+pub use iterators::{BencodeDictIter, BencodeListIter};
 use parse_int::{check_integer, decode_int, is_numeric};
 use stack_frame::{StackFrame, StackFrameState};
 use token::{Token, TokenType};
